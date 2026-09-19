@@ -18,7 +18,7 @@
 :root{
   --ink:#20242B; --ink2:#4A5260; --ink3:#79828F;
   --bg:#FAF8F3; --card:#FFFFFF; --line:#E4DFD4;
-  --p1:#4B2A82; --p2:#1F4D3D; --p3:#8B5E1A;
+  --p1:#0F4A40; --p2:#1F4D3D; --p3:#8B5E1A;
   --accent:var(--p1);
   --warn:#B8860B;
   --fs:22px; --lh:1.9;
@@ -241,7 +241,7 @@ body.reading #aibtn{bottom:calc(152px + var(--safe-b))}
 .m.a .tx blockquote p{margin:0}
 .m.a .tx code{background:#F2EFE7;border-radius:5px;padding:1px 5px;font-size:.92em}
 .m.a .tx hr{border:0;border-top:1px solid var(--line);margin:12px 0}
-.m.a .tx a.vs{color:var(--accent);border-bottom:1px solid rgba(75,42,130,.3);white-space:nowrap}
+.m.a .tx a.vs{color:var(--accent);border-bottom:1px solid rgba(15,74,64,.3);white-space:nowrap}
 /* 表格：窄螢幕可橫向捲，不把版面撐破 */
 .md-tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 0 10px}
 .md-tw table{border-collapse:collapse;font-size:.92em;min-width:100%}
@@ -451,7 +451,7 @@ html[data-orig="0"] #lbody .orig{display:none}
 #booterr.on{display:block}
 #booterr b{display:block;font-size:1.15em;margin-bottom:8px}
 #booterr code{display:block;word-break:break-all;opacity:.8;margin:8px 0;font-size:.9em}
-#booterr button{background:#FBE9A8;color:#4B2A82;border-radius:12px;padding:11px 18px;
+#booterr button{background:#FBE9A8;color:#0F4A40;border-radius:12px;padding:11px 18px;
   font-size:1em;font-weight:700;margin:10px 8px 0 0}
 
 hr.sep{border:0;border-top:1px solid var(--line);margin:26px 0}
@@ -4331,7 +4331,7 @@ function applyTheme(){
   const dark = t === 'dark' || (t === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   const mc = document.querySelector('meta[name="theme-color"]');
-  if (mc) mc.setAttribute('content', dark ? '#171420' : '#4B2A82');
+  if (mc) mc.setAttribute('content', dark ? '#171420' : '#0F4A40');
 }
 function setTheme(t){ S.settings.theme = t; save(); applyTheme(); vMe(); toast(t==='dark'?'深色模式':t==='auto'?'跟隨系統':'淺色模式'); }
 try { if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); } catch(e){}

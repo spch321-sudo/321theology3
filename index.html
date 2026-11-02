@@ -7354,6 +7354,193 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
   window.VPICK321 = { pick: pick, card: card, lang: lang, detect: detect, refs: function (t) { return toc().then(function () { return refs(t); }); } };
 })();
 </script>
+<script id="TXP">
+/* ═══════════════════════════════════════════════════════════════════
+   TXP 掛件 v1（2026-11-03）：321學神神學（一／二／三）畫線面板與頂列，補齊《321互動聖經》標準
+   · 「寫下你的領受」面板新增：🖼 做成美圖、📋 複製、↗ 分享、「整段」範圍鈕（原有的朗讀／顏色／前後一句／儲存／問小智／刪除領受／移除畫線／取消不動）
+   · 選取工具列新增「🖼 美圖」
+   · 頂列新增 繁／简／EN 切換（與互動聖經、各卷講義一致）
+   · 不改既有函式：包住 window.markMenu，面板畫完後補按鈕
+   ═══════════════════════════════════════════════════════════════════ */
+(function () {
+  if (window.__txp) return; window.__txp = 1;
+  function g(f) { try { return f(); } catch (e) { return undefined; } }
+  function L() { return g(function () { return lang(); }) || 'zh-Hant'; }
+  function T(zh, en) {
+    var l = L();
+    if (l === 'en') return en;
+    if (l === 'zh-Hans' && typeof toSC === 'function') { var r = g(function () { return toSC(zh); }); if (r) return r; }
+    return zh;
+  }
+  function say(m) { g(function () { toast(m); }); }
+  function esc2(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  /* ── CSS ── */
+  if (!document.getElementById('txpCss')) {
+    var st = document.createElement('style'); st.id = 'txpCss';
+    st.textContent =
+      '.txp-lang{display:inline-flex;align-items:center;flex:0 0 auto;border:1px solid var(--line,#ddd);border-radius:999px;overflow:hidden;margin:0 2px;background:var(--card,#fff)}' +
+      '.txp-lang button{border:0;background:transparent;color:inherit;font:inherit;font-size:13px;font-weight:700;min-width:30px;height:32px;padding:0 5px;cursor:pointer}' +
+      '.txp-lang button.on{background:var(--navy,#1E3A5F);color:#fff}' +
+      '@media (max-width:480px){header.top .wrap{gap:4px}header.top .wrap .iconbtn{width:40px;height:40px}.txp-lang button{min-width:26px;height:30px;padding:0 3px;font-size:12.5px}}' +
+      '#lbody,#view{overflow-wrap:anywhere}.dlt{flex:0 1 auto!important;white-space:normal!important}*:has(>.dlt){flex-wrap:wrap}' +
+      '#lbody .vs,#lbody a{white-space:normal!important}' +
+      '#lbody table{display:block;max-width:100%;overflow-x:auto}.tw{max-width:100%}.steps{grid-template-columns:repeat(4,minmax(0,1fr))!important}.step{min-width:0}' +
+      '.txp-acts{margin-top:10px}.txp-acts .btn{flex:1 1 auto;min-width:92px}' +
+      '.exrow .txp-whole{white-space:nowrap}' +
+      'body:has(#sheet.on) #gxuFab{display:none!important}';
+    document.head.appendChild(st);
+  }
+
+  /* ── 頂列：繁／简／EN ── */
+  function mountLang() {
+    var fsz = document.getElementById('fsz'); if (!fsz || document.getElementById('txpLang')) return;
+    var w = document.createElement('div'); w.id = 'txpLang'; w.className = 'txp-lang'; w.setAttribute('role', 'group'); w.setAttribute('aria-label', 'Language');
+    var cur = L();
+    [['zh-Hant', '繁'], ['zh-Hans', '简'], ['en', 'EN']].forEach(function (p) {
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = p[1]; b.setAttribute('data-l', p[0]);
+      if (cur === p[0] || (p[0] === 'zh-Hant' && cur !== 'zh-Hans' && cur !== 'en')) b.className = 'on';
+      b.onclick = function (e) { e.stopPropagation(); if (L() !== p[0]) g(function () { setLang(p[0]); }); };
+      w.appendChild(b);
+    });
+    fsz.parentNode.insertBefore(w, fsz);
+  }
+
+  /* ── 取得這一處畫線 ── */
+  function curMark(i) { return g(function () { return marks(CUR.lesson)[i]; }); }
+  function typed() { var t = document.getElementById('mknote'); return t ? String(t.value || '').trim() : ''; }
+  function keep(m) { if (!m) return; var n = typed(); if (n !== (m.note || '')) { m.note = n; g(function () { save(); }); } }
+  function refText() {
+    var l = g(function () { return CACHE[CUR.lesson]; }) || {};
+    var app = String(document.title || '321學神神學').split(/[\s|｜—-]/)[0] || '321學神神學';
+    var n = l.number || (String(CUR.lesson || '').replace(/\D/g, '') * 1);
+    var en = L() === 'en';
+    return en ? ('321 Theology — Lesson ' + n) : T(app + '　第' + n + '課', '');
+  }
+  /* 畫線的文字：英文模式下當初存的是「字與字沒有空白」的版本，這裡改從畫面上的句子取（有空白） */
+  function qText(m) {
+    if (L() !== 'en') return m.q;
+    var r = g(function () { var l = sentList(), sp = markSpan(m, l); return sp ? l.slice(sp[0], sp[1] + 1).map(function (x) { return x.t; }).join(' ') : ''; });
+    return r || m.q;
+  }
+  function pack(m) {
+    var s = qText(m) + '\n—— ' + refText(), n = typed();
+    if (n) s += '\n\n' + T('我的領受：', 'My reflection: ') + n;
+    return s;
+  }
+  function copyText(s) {
+    return new Promise(function (ok, no) {
+      function legacy() {
+        try {
+          var ta = document.createElement('textarea'); ta.value = s; ta.setAttribute('readonly', '');
+          ta.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+          document.body.appendChild(ta); ta.select(); var d = document.execCommand('copy'); document.body.removeChild(ta); d ? ok() : no();
+        } catch (e) { no(e); }
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s).then(ok, legacy); else legacy();
+    });
+  }
+
+  /* ── 整段：把畫線擴到這一段（同一個 p／li）的所有句子 ── */
+  function whole(i) {
+    var ms = g(function () { return marks(CUR.lesson); }), m = ms && ms[i]; if (!m) return;
+    keep(m);
+    var list = sentList(), sp = markSpan(m, list);
+    if (!sp) return say(T('這一處沒辦法再延伸', 'Cannot extend this one'));
+    var blk = list[sp[0]].blk, a = sp[0], z = sp[1];
+    if (list[z].blk !== blk) return say(T('這一處跨了段落，沒辦法整段', 'This one spans paragraphs'));
+    while (a > 0 && list[a - 1].blk === blk) a--;
+    while (z < list.length - 1 && list[z + 1].blk === blk) z++;
+    if (a === sp[0] && z === sp[1]) return say(T('這一段已經整段畫起來了', 'The whole paragraph is already highlighted'));
+    var q = list.slice(a, z + 1).map(function (x) { return x.t; }).join(L() === 'en' ? ' ' : '').replace(/\s+/g, ' ').trim();
+    if (q.length > 1200) return say(T('這一段太長了，請用「往後一句」慢慢加', 'Too long — add sentences one at a time'));
+    var f = flatten(q);
+    if (ms.some(function (x, j) { return j !== i && (x.f || flatten(x.q)) === f; })) return say(T('這一段已經畫過線了', 'Already highlighted'));
+    m.q = q; m.f = f; save(); rerenderKeepScroll(); markMenu(i);
+    say(T('已畫整段，共 ' + (z - a + 1) + ' 句', 'Whole paragraph — ' + (z - a + 1) + ' sentences'));
+  }
+
+  function act(i, a) {
+    var m = curMark(i); if (!m) return;
+    if (a === 'whole') return whole(i);
+    keep(m);
+    if (a === 'card') {
+      var box = document.getElementById('sheet'); if (box) box.classList.remove('on');
+      if (window.GXU && GXU.open) GXU.open({ text: qText(m), note: typed() || m.note || '', ref: refText(), plain: true });
+      else say(T('美圖工作室還沒準備好，請稍後再試', 'Card studio is not ready yet'));
+    } else if (a === 'copy') {
+      copyText(pack(m)).then(function () { say(T('已複製', 'Copied')); }, function () { say(T('複製失敗，請長按文字手動複製', 'Copy failed — press and hold the text')); });
+    } else if (a === 'share') {
+      var s = pack(m), url = g(function () { return location.href.split('#')[0]; }) || '';
+      if (navigator.share) navigator.share({ title: refText(), text: s, url: url }).catch(function () {});
+      else copyText(s + '\n' + url).then(function () { say(T('已複製，可貼到 LINE／訊息分享', 'Copied — paste it into a message')); }, function () { say(T('這個瀏覽器不能分享', 'Sharing is not available here')); });
+    }
+  }
+
+  /* ── 修正：已寫領受的畫線旁會有一顆 ▶ 旗標（.mkflag，放在句子 span 裡面），
+        它的字被算進句子，之後「往後一句／整段」就對不上（畫線範圍算不出來）。算句子時把旗標的字去掉。 ── */
+  var SL0 = window.sentList;
+  if (typeof SL0 === 'function') {
+    window.sentList = function () {
+      var out = SL0.apply(this, arguments), en = L() === 'en';
+      out.forEach(function (x) {
+        var flagged = x.els.some(function (e) { return e.querySelector && e.querySelector('.mkflag'); });
+        if (!flagged && !en) return;
+        /* 英文：句子是逐字包起來的，字與字之間的空白在 span 外面，直接串會變成 "Lastweek,whenyour…"，改取整句範圍的文字 */
+        if (en) {
+          try {
+            var r = document.createRange(); r.setStartBefore(x.els[0]); r.setEndAfter(x.els[x.els.length - 1]);
+            x.t = r.toString().replace(/[▶▼]/g, '').replace(/\s+/g, ' ').trim(); return;
+          } catch (e) {}
+        }
+        x.t = x.els.map(function (e) { var c = e.cloneNode(true); c.querySelectorAll('.mkflag').forEach(function (f) { f.remove(); }); return c.textContent; }).join('');
+      });
+      return out;
+    };
+  }
+
+  /* ── 包住 markMenu：面板畫完後補按鈕 ── */
+  function enhance(i) {
+    var body = document.getElementById('sheetbody'); if (!body || body.querySelector('.txp-acts')) return;
+    var save1 = null; body.querySelectorAll('button').forEach(function (b) { if (/markSave\(/.test(b.getAttribute('onclick') || '')) save1 = b; });
+    if (!save1) return;
+    if (L() === 'en') {
+      var m0 = curMark(i), qs = body.querySelector('.mkquote span'); if (m0 && qs) qs.textContent = qText(m0);
+      var cn = body.querySelector('.exrow .cnt'); if (cn) { var nn = parseInt(cn.textContent, 10) || 1; cn.textContent = nn + (nn > 1 ? ' sentences' : ' sentence'); }
+    }
+    var ex = body.querySelector('.exrow');
+    if (ex) {
+      var w = document.createElement('button'); w.type = 'button'; w.className = 'txp-whole'; w.textContent = T('整段', 'Paragraph');
+      w.onclick = function () { act(i, 'whole'); }; ex.appendChild(w);
+    }
+    var row = document.createElement('div'); row.className = 'btnrow txp-acts';
+    row.innerHTML = '<button class="btn gold" type="button" data-a="card">🖼 ' + T('做成美圖', 'Make a card') + '</button>' +
+      '<button class="btn" type="button" data-a="copy">📋 ' + T('複製', 'Copy') + '</button>' +
+      '<button class="btn" type="button" data-a="share">↗ ' + T('分享', 'Share') + '</button>';
+    var r1 = save1.closest('.btnrow') || save1.parentNode;
+    r1.parentNode.insertBefore(row, r1.nextSibling);
+    row.querySelectorAll('[data-a]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); act(i, b.getAttribute('data-a')); }; });
+  }
+  var M0 = window.markMenu;
+  if (typeof M0 === 'function') {
+    window.markMenu = function (i) { var r = M0.apply(this, arguments); try { enhance(i); } catch (e) { try { console.error('TXP', e); } catch (_) {} } return r; };
+  }
+
+  /* ── 選取工具列：🖼 美圖 ── */
+  function mountSel() {
+    var bar = document.getElementById('selbar'); if (!bar || document.getElementById('sbCard')) return;
+    var b = document.createElement('button'); b.id = 'sbCard'; b.textContent = '🖼 ' + T('美圖', 'Card');
+    b.onclick = function () {
+      var t = g(function () { return SELTXT; }) || ''; g(function () { clearSel(); });
+      if (t && window.GXU && GXU.open) GXU.open({ text: t, ref: refText(), plain: true });
+    };
+    bar.insertBefore(b, document.getElementById('sbAsk'));
+  }
+
+  function boot() { try { mountLang(); } catch (e) {} try { mountSel(); } catch (e) {} }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
 <script src="coread.js?v=1.4-co1" data-pfx="th3-" data-app="321學神神學（三）" data-app-zs="321学神神学（三）" data-app-en="321 Theology III"></script>
 </body>
 </html>

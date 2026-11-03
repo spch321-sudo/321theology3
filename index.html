@@ -522,6 +522,7 @@ html[data-theme="dark"] table td, html[data-theme="dark"] table th{ border-color
     <button class="iconbtn" id="aifav" aria-label="收藏">★</button>
     <button class="iconbtn" id="aiclear" aria-label="清除">↺</button>
     <button class="iconbtn" id="aiclose" aria-label="關閉">✕</button></div>
+  <div id="aictl"></div>
   <div class="msgs" id="aimsgs"></div>
   <div id="aibank"></div>
   <div class="quick" id="aiquick"></div>
@@ -543,6 +544,38 @@ html[data-theme="dark"] table td, html[data-theme="dark"] table th{ border-color
   </div>
 </div>
 
+<script src="xz2.js?v=xz1103"></script>
+<script id="XZ2I">
+/* XZ2 · 小智最新功能共用套件（-xz1103）：回答對象十種、回答長度五段、讀者資料、慕道友信仰背景、設定頁區塊、滿版小智頁摘要列 */
+XZ2.init({
+  app: '321theology3', pfx: 'th3-',
+  lang: function () { try { return S.settings.lang || 'zh-Hant'; } catch (e) { return 'zh-Hant'; } },
+  ctxWord: '課文脈絡', ctxWordZs: '课文脉络', ctxWordEn: 'the lesson context',
+  qsLabel: ['對象範例題', '对象范例题', 'Examples for me'],
+  reAnswer: function (m) { try { return aiReAnswer(m); } catch (e) { return false; } },
+  onAsk: function (q) { try { aiSend(q); } catch (e) {} },
+  toast: function (m) { try { toast(m); } catch (e) {} },
+  readCtx: function () { try { if (CUR && CUR.lesson) { var n = meta(CUR.lesson).number; return [lang() === 'en' ? 'Currently reading Lesson ' + n : '目前讀到：第' + n + '課']; } } catch (e) {} return []; }
+});
+XZ2.watchScroll('#aimsgs');
+</script>
+<style id="xz2full">
+/* 滿版小智頁（-xz1103）：整頁、頂部貼齊、輸入欄固定在畫面最底、回答全寬 */
+#ai{align-items:stretch;background:var(--bg)}
+#ai .box{max-width:none;width:100%;height:100%;border-radius:0}
+#ai .hd{padding-top:calc(12px + env(safe-area-inset-top,0px))}
+#aictl{flex:0 0 auto;padding:8px 18px 10px;border-bottom:1px solid var(--line);max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch;background:var(--bg);--xz2-fs:calc(var(--fs)*.62);--xz2-acc:var(--p1)}
+#ai .msgs{min-height:0}
+#ai .m.a > span{display:block;max-width:100%;overflow-wrap:anywhere}
+#ai .m.a > span > span{background:none;border:0;padding:0;border-radius:0}
+#ai .m.a > span > .tx{display:block}
+#ai .m.a > span > .mact{display:flex}
+#ai .m.u span{max-width:90%}
+#ai .quick{flex:0 0 auto}
+#ai .inp{padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+body:has(#ai.on) #gxuFab{display:none}
+.xz2s{--xz2-fs:calc(var(--fs)*.62);--xz2-acc:var(--p1)}
+</style>
 <script>
 'use strict';
 const CNUM=['','一','二','三','四','五','六','七','八','九','十','十一','十二','十三','十四','十五','十六','十七','十八','十九','二十'];
@@ -2273,6 +2306,8 @@ function vSettings(){
       二十五課的四本全文；第五部已英譯課題、核心真理與金句，第26–33課四本全文亦全部完成；第六部第34–39課四本全文全部完成。經文採 World English Bible。
       小智全程用英文回答。`}</p>
     ${voices}
+    <p class="eyebrow" style="margin-top:22px">小智</p>
+    ${XZ2.settingsHtml()}
     <p class="eyebrow" style="margin-top:22px">字級</p>
     <div class="btnrow">${['標準','大','特大','超大'].map((n,i)=>
       `<button class="btn ${S.settings.fs===i?'pri':''}" onclick="setFS2(${i})">${n}</button>`).join('')}</div>
@@ -4085,7 +4120,7 @@ function aiSystem(){
       ? '【语言与风格】一律用简体中文回答，引用圣经一律使用《和合本》。'
       : '【語言與風格】一律用繁體中文回答，引用聖經一律使用《和合本》。'),
     '只在你有把握時引用經文，絕不杜撰經文或出處；不確定就如實說明，請對方自行查考。',
-    '深入淺出、善用比喻、條理清晰、溫暖有盼望。回應精簡，通常二、三段內。',
+    '深入淺出、善用比喻、條理清晰、溫暖有盼望。',
     '用自然段落文字說話，不用井號標題。需要逐點時可以用「-」條列，需要強調可以用 **粗體**。',
     '兩三樣東西要並排比較時（例如舊人與新人、律法與恩典），可以用 Markdown 表格，欄位不超過三欄、字數精簡；其餘時候一律用段落。',
     '',
@@ -4101,6 +4136,7 @@ function aiOpen(pre){
   if (!aiOn()) return toast('AI 尚未設定');
   AI.fav = false;
   $('#ai').classList.add('on');
+  try { XZ2.mountControls($('#aictl'), { qs: true }); } catch (e) {}
   $('#aictx').textContent = CUR.lesson ? '第' + meta(CUR.lesson).number + '課' : '';
   aiRender();
   if (pre){ $('#aiin').value = ''; aiSend(pre); }
@@ -4179,33 +4215,60 @@ function aiRender(keep){
       : (QSB.open ? '✕ 收起題庫' : '📚 範例問題')}</button>` +
     aiQuicks().map(q => `<button onclick="aiSend(${jsq(q)})">${esc(q)}</button>`).join('');
 }
+/* 切換回答長度／信仰背景：把最後一組問答拿掉，用同一個問題重新回答（取代、不疊加） */
+function aiReAnswer(msg){
+  if (AI.busy) return false;
+  let ui = -1; AI.msgs.forEach((m, i) => { if (m.role === 'user') ui = i; });
+  if (ui < 0 || ui === AI.msgs.length - 1) return false;
+  const q = AI.msgs[ui].text;
+  AI.msgs.splice(ui); FOLD.clear();
+  if (msg) toast(msg);
+  aiSend(q);
+  return true;
+}
 async function aiSend(text){
   let q = (text != null ? text : $('#aiin').value).trim();
   // 畫面是簡體，送出去的也該是簡體，不然對話框裡半繁半簡
   if (lang() === 'zh-Hans') q = toSC(q);
   if (!q || AI.busy) return;
   $('#aiin').value = '';
+  try { XZ2.collapse(); } catch (e) {}
   AI.msgs.push({ role:'user', text:q }); AI.busy = true; aiRender();
   if (navigator.onLine === false){
     AI.msgs.push({ role:'assistant', text:'現在沒有網路，小智暫時無法回應。課文與金句都還可以離線使用。' });
     AI.busy = false; return aiRender();
   }
-  const ctrl = window.AbortController ? new AbortController() : null;
-  const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch(e){} }, 45000) : null;
+  /* 回答對象／信仰背景／讀者資料／回答長度（五段）由 XZ2 提供；被截斷（max_tokens）時自動接續，最多再接 4 次 */
+  const sys = aiSystem() + XZ2.sysExtra();
+  const hist = AI.msgs.slice(-12).map(m => ({ role:m.role === 'user' ? 'user' : 'assistant', content:m.text }));
+  while (hist.length && hist[0].role !== 'user') hist.shift();
+  let acc = '', fail = '', n = 0;
   try {
-    const res = await fetch(CFG.aiEndpoint, {
-      method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl ? ctrl.signal : undefined,
-      body: JSON.stringify({ model: CFG.aiModel, max_tokens: 1000, system: aiSystem(),
-        messages: AI.msgs.slice(-12).map(m => ({ role:m.role, content:m.text })) })
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const d = await res.json();
-    const t = (d.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-    AI.msgs.push({ role:'assistant', text: t || '小智這次沒有回應內容，請再問一次。' });
+    for (;;){
+      const ctrl = window.AbortController ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => { try { ctrl.abort(); } catch(e){} }, 90000) : null;
+      let stop = '', t = '';
+      try {
+        const res = await fetch(CFG.aiEndpoint, {
+          method:'POST', headers:{'Content-Type':'application/json'}, signal: ctrl ? ctrl.signal : undefined,
+          body: JSON.stringify({ model: CFG.aiModel, max_tokens: XZ2.maxTokens(), system: sys,
+            messages: n ? hist.concat([{ role:'assistant', content:acc }, { role:'user', content:XZ2.contAsk() }]) : hist })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const d = await res.json();
+        t = (d.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+        stop = d.stop_reason || d.finish_reason || '';
+      } finally { if (timer) clearTimeout(timer); }
+      if (!t) break;
+      acc = n ? XZ2.join(acc, t) : t;
+      const tr2 = XZ2.truncated(acc, stop);
+      if (!tr2 || n >= (tr2 === 'sure' ? 4 : 1)) break;
+      n++;
+    }
   } catch(e){
-    AI.msgs.push({ role:'assistant', text: (e && e.name === 'AbortError')
-      ? '等太久了，請再試一次。' : '連線出了狀況，請稍後再試。' });
-  } finally { if (timer) clearTimeout(timer); }
+    fail = (e && e.name === 'AbortError') ? '等太久了，請再試一次。' : '連線出了狀況，請稍後再試。';
+  }
+  AI.msgs.push({ role:'assistant', text: acc || fail || '小智這次沒有回應內容，請再問一次。' });
   AI.busy = false; aiRender();
 }
 $('#aibtn').onclick   = () => aiOpen();
@@ -4306,7 +4369,7 @@ enableAIBtnDrag();
 let TT = null;
 function toast(msg){
   let t = $('#toast');
-  if (!t){ t = el('<div id="toast" style="position:fixed;left:50%;bottom:calc(96px + var(--safe-b));transform:translateX(-50%);background:#20242B;color:#fff;padding:12px 20px;border-radius:999px;font-size:.7em;z-index:99;letter-spacing:.08em"></div>'); document.body.appendChild(t); }
+  if (!t){ t = el('<div id="toast" style="pointer-events:none;position:fixed;left:50%;bottom:calc(96px + var(--safe-b));transform:translateX(-50%);background:#20242B;color:#fff;padding:12px 20px;border-radius:999px;font-size:.7em;z-index:99;letter-spacing:.08em"></div>'); document.body.appendChild(t); }
   t.textContent = (lang() === 'zh-Hant' ? msg : tr(msg));   // 提示也要跟著語言走
   t.style.opacity = 1;
   clearTimeout(TT); TT = setTimeout(() => t.style.opacity = 0, 1600);

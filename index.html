@@ -2625,8 +2625,11 @@ const MD_REF = new RegExp('(?:' + BOOK_RE + ')\\s*\\d+\\s*[:：]\\s*\\d+(?:[-–
 function mdInline(t){
   let h = esc(t);
   h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
-  h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+  h = h.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*\*([^*\n]+)\*(?!\*)/g, '<strong>$1</strong>');   /* 小智偶爾少寫一個星號 */
   h = h.replace(/(?<![\w*])\*([^*\n]+)\*(?![\w*])/g, '<em>$1</em>');
+  h = h.replace(/\*+/g, '');                                          /* 殘留的星號不顯示 */
   // 經文出處做成可點選（沿用課文裡同一個彈窗）
   h = h.replace(MD_REF, m => {
     const r = m.replace(/\s/g, '').replace('：', ':');

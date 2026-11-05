@@ -2563,15 +2563,20 @@ function rvChunks(text){
                        if (seg) fin.push(seg); });
   return fin.length ? fin : [t];
 }
+/* rf1105：音檔下載。有 RF1105 掛件就走逾時／斷路器版；沒有就維持原樣 */
+async function rfTtsBlob(piece){
+  if (window.RF1105 && RF1105.net) return RF1105.net(piece);
+  const res = await fetch(CFG.ttsEndpoint, { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ voice: rvVoice(), rate: rvRate(), sil:140, silc:140, sile:260, text: piece }) });
+  if (!res.ok) throw new Error('TTS ' + res.status);
+  return res.blob();
+}
 async function rvPiece(piece){
   const key = rvVoice() + '|' + rvRate() + '|' + piece;
   if (rv.url[key]) return rv.url[key];
   try { const b = await idbGet('audio', key);
     if (b){ const u = URL.createObjectURL(b); rv.url[key] = u; return u; } } catch(e){}
-  const res = await fetch(CFG.ttsEndpoint, { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ voice: rvVoice(), rate: rvRate(), sil:140, silc:140, sile:260, text: piece }) });
-  if (!res.ok) throw new Error('TTS ' + res.status);
-  const blob = await res.blob();
+  const blob = await rfTtsBlob(piece);   // rf1105：逾時＋斷路器（RF1105.net）
   try { idbPut('audio', key, blob); } catch(e){}
   const u = URL.createObjectURL(blob); rv.url[key] = u; return u;
 }
@@ -2588,10 +2593,20 @@ function rvStop(){
 // 任何一段抓不到，就用系統語音把那一段補上，絕不中斷
 function sysChunk(piece, cb){
   if (!('speechSynthesis' in window)) return cb && cb();
+  /* rf1105：看門狗——裝置語音偶爾不觸發 onend（iOS），依字數算時限（字數×480ms÷語速＋10 秒，至少 15 秒），逾時就取消並接下一段；暫停中不計 */
+  let done = false, wd = 0;
+  const fin = () => { if (done) return; done = true; clearTimeout(wd); cb && cb(); };
+  const arm = ms => { wd = setTimeout(() => {
+    if (done) return;
+    if (SPK.on && SPK.pause){ arm(5000); return; }
+    try { speechSynthesis.cancel(); } catch(e){}
+    fin(); }, ms); };
   try { const u = new SpeechSynthesisUtterance(piece);
     u.lang = 'zh-TW'; u.rate = 0.95 * (S.settings.rate || 1);
-    u.onend = cb; u.onerror = cb; speechSynthesis.speak(u);
-  } catch(e){ cb && cb(); }
+    u.onend = fin; u.onerror = fin;
+    arm(Math.max(15000, Math.round(String(piece).length * 480 / (S.settings.rate || 1)) + 10000));
+    speechSynthesis.speak(u);
+  } catch(e){ fin(); }
 }
 function rvSpeak(text, onDone){
   rvUnlock();
@@ -3121,7 +3136,7 @@ function drawBar(){
     <button onclick="spkStep(1)" title="下一段">⏭</button>
     <button class="${S.settings.follow ? 'on' : ''}" title="朗讀時自動捲動"
       onclick="toggleFollow()">${S.settings.follow ? '⇳' : '⇕'}</button>
-    <button onclick="stopSpeak()" title="停止">✕</button>`;
+    ${window.RF1105 ? RF1105.sleepBtn() : ''}<button onclick="stopSpeak()" title="停止">✕</button>`;
 }
 function toggleFollow(){
   S.settings.follow = S.settings.follow ? 0 : 1; save(); drawBar();
@@ -3189,10 +3204,7 @@ function spkCtx(){
 async function rvBlob(piece){
   const key = rvVoice() + '|' + rvRate() + '|' + piece;
   try { const b = await idbGet('audio', key); if (b) return b; } catch(e){}
-  const res = await fetch(CFG.ttsEndpoint, { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ voice: rvVoice(), rate: rvRate(), sil:140, silc:140, sile:260, text: piece }) });
-  if (!res.ok) throw new Error('TTS ' + res.status);
-  const blob = await res.blob();
+  const blob = await rfTtsBlob(piece);   // rf1105：逾時＋斷路器（RF1105.net）
   try { idbPut('audio', key, blob); } catch(e){}
   return blob;
 }
@@ -4243,7 +4255,7 @@ async function aiSend(text){
   }
   /* 回答對象／信仰背景／讀者資料／回答長度（五段）由 XZ2 提供；被截斷（max_tokens）時自動接續，最多再接 4 次 */
   const sys = aiSystem() + XZ2.sysExtra();
-  const hist = AI.msgs.slice(-12).map(m => ({ role:m.role === 'user' ? 'user' : 'assistant', content:m.text }));
+  const hist = AI.msgs.filter(m => !m.crisis && !/^💛 /.test(m.text || '')).slice(-12).map(m => ({ role:m.role === 'user' ? 'user' : 'assistant', content:m.text }));
   while (hist.length && hist[0].role !== 'user') hist.shift();
   let acc = '', fail = '', n = 0;
   try {
@@ -4653,13 +4665,13 @@ var GXS = (function () {
   const isIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   const TPL = {
-    navy:  { n: ['深藍聖夜', 'Midnight Navy'], bg: ['#123F92', '#0D3988', '#071A42'], glow: 'rgba(212,166,91,.30)', ink: '#F2ECDD', accent: '#F7EFDC', gold: '#D4A65B', sub: '#BBA98A', frame: 'rgba(212,166,91,.42)' },
-    paper: { n: ['素樸信箋', 'Plain Letter'], bg: ['#FBF8F1', '#F4EFE3', '#EDE6D6'], glow: 'rgba(212,166,91,.45)', ink: '#3A3122', accent: '#23211C', gold: '#A9762F', sub: '#8A7C63', frame: 'rgba(169,118,47,.34)' },
-    dawn:  { n: ['晨曦盼望', 'Dawn of Hope'], bg: ['#FFF6EC', '#FBE9D2', '#F6D9B8'], glow: 'rgba(255,214,150,.6)', ink: '#3A2A1A', accent: '#8A4B16', gold: '#C97A22', sub: '#8A6A4A', frame: 'rgba(181,101,29,.30)' },
-    grace: { n: ['青草安歇', 'Green Pastures'], bg: ['#F2F7F1', '#E4EFE6', '#D6E7DA'], glow: 'rgba(160,200,170,.5)', ink: '#1C2E26', accent: '#255943', gold: '#3C8A64', sub: '#5C7A6A', frame: 'rgba(46,106,80,.28)' },
-    rose:  { n: ['溫柔玫瑰', 'Gentle Rose'], bg: ['#FCF5F3', '#F6E7E3', '#EFD8D2'], glow: 'rgba(220,160,150,.45)', ink: '#33221E', accent: '#8A3D2E', gold: '#B36A54', sub: '#8A6A62', frame: 'rgba(154,74,58,.28)' },
-    sky:   { n: ['平安晴空', 'Peaceful Sky'], bg: ['#F1F7FB', '#DFEEF6', '#CFE4F0'], glow: 'rgba(150,200,230,.5)', ink: '#1B2A33', accent: '#1E5270', gold: '#2E7DA0', sub: '#5A7684', frame: 'rgba(37,96,128,.28)' },
-    linen: { n: ['素雅棉麻', 'Soft Linen'], bg: ['#F7F4EE', '#EFEAE0', '#E6DFD2'], glow: 'rgba(200,190,170,.4)', ink: '#2A2620', accent: '#4A4234', gold: '#8A7A5A', sub: '#7A7263', frame: 'rgba(90,80,64,.26)' },
+    navy:  { n: ['深藍聖夜', 'Midnight Navy'], bg: ['#123F92', '#0D3988', '#071A42'], glow: 'rgba(212,166,91,.30)', ink: '#F2ECDD', accent: '#F7EFDC', gold: '#D4A65B', sub: '#C1B195', frame: 'rgba(212,166,91,.42)' },
+    paper: { n: ['素樸信箋', 'Plain Letter'], bg: ['#FBF8F1', '#F4EFE3', '#EDE6D6'], glow: 'rgba(212,166,91,.45)', ink: '#3A3122', accent: '#23211C', gold: '#A9762F', sub: '#706450', frame: 'rgba(169,118,47,.34)' },
+    dawn:  { n: ['晨曦盼望', 'Dawn of Hope'], bg: ['#FFF6EC', '#FBE9D2', '#F6D9B8'], glow: 'rgba(255,214,150,.6)', ink: '#3A2A1A', accent: '#8A4B16', gold: '#C97A22', sub: '#775B40', frame: 'rgba(181,101,29,.30)' },
+    grace: { n: ['青草安歇', 'Green Pastures'], bg: ['#F2F7F1', '#E4EFE6', '#D6E7DA'], glow: 'rgba(160,200,170,.5)', ink: '#1C2E26', accent: '#255943', gold: '#3C8A64', sub: '#4F695B', frame: 'rgba(46,106,80,.28)' },
+    rose:  { n: ['溫柔玫瑰', 'Gentle Rose'], bg: ['#FCF5F3', '#F6E7E3', '#EFD8D2'], glow: 'rgba(220,160,150,.45)', ink: '#33221E', accent: '#8A3D2E', gold: '#B36A54', sub: '#755A53', frame: 'rgba(154,74,58,.28)' },
+    sky:   { n: ['平安晴空', 'Peaceful Sky'], bg: ['#F1F7FB', '#DFEEF6', '#CFE4F0'], glow: 'rgba(150,200,230,.5)', ink: '#1B2A33', accent: '#1E5270', gold: '#2E7DA0', sub: '#4D6572', frame: 'rgba(37,96,128,.28)' },
+    linen: { n: ['素雅棉麻', 'Soft Linen'], bg: ['#F7F4EE', '#EFEAE0', '#E6DFD2'], glow: 'rgba(200,190,170,.4)', ink: '#2A2620', accent: '#4A4234', gold: '#8A7A5A', sub: '#686154', frame: 'rgba(90,80,64,.26)' },
     night: { n: ['深夜星光', 'Starry Night'], bg: ['#101E1B', '#16302A', '#0E2420'], glow: 'rgba(232,201,122,.26)', ink: '#EDEAE0', accent: '#E8C97A', gold: '#E8C97A', sub: '#9FB0AA', frame: 'rgba(232,201,122,.34)' },
     plain: { n: ['純白簡潔', 'Pure White'], bg: ['#FFFFFF', '#FFFFFF', '#FFFFFF'], glow: 'rgba(0,0,0,0)', ink: '#23211C', accent: '#1F4D3D', gold: '#A9762F', sub: '#6B6255', frame: 'rgba(31,77,61,.22)' }
   };
@@ -4927,7 +4939,8 @@ var GXS = (function () {
   function drawCard(cv, W, H) {
     if (isFull()) return drawFull(cv, W, H);
     const ctx = cv.getContext('2d'); cv.width = W; cv.height = H;
-    const Tp = inkT(TPL[st().tpl]);
+    let Tp = inkT(TPL[st().tpl]); cardOverflow = '';
+    if (photoImg && photoMode !== 'orig') Tp = Object.assign({}, Tp, { sub: Tp.ink });   /* rf1105：相片上團體名與署名用內文色 */
     const Sm = Math.min(W, H), F = Sm / 1080, pad = Math.round(Sm * .085), iw = W - pad * 2;
     const wide = W > H * 1.2;
     let colW = wide ? Math.min(iw, Math.round(H * 1.5)) : iw;
@@ -4973,10 +4986,10 @@ var GXS = (function () {
       coverDraw2(ctx, photoImg, 0, 0, W, H);
       const hx = Tp.bg[1].replace('#', '');
       const R0 = parseInt(hx.slice(0, 2), 16), G0 = parseInt(hx.slice(2, 4), 16), B0 = parseInt(hx.slice(4, 6), 16);
-      const scg = ctx.createLinearGradient(0, 0, 0, H);
-      scg.addColorStop(0, `rgba(${R0},${G0},${B0},0.46)`);
-      scg.addColorStop(.5, `rgba(${R0},${G0},${B0},0.66)`);
-      scg.addColorStop(1, `rgba(${R0},${G0},${B0},0.56)`);
+      const scg = ctx.createLinearGradient(0, 0, 0, H), sa = scrimAlphas(photoImg, Tp, [R0, G0, B0]);
+      scg.addColorStop(0, `rgba(${R0},${G0},${B0},${sa[0]})`);
+      scg.addColorStop(.5, `rgba(${R0},${G0},${B0},${sa[1]})`);
+      scg.addColorStop(1, `rgba(${R0},${G0},${B0},${sa[2]})`);
       ctx.fillStyle = scg; ctx.fillRect(0, 0, W, H);
     }
     const rg = ctx.createRadialGradient(W * .84, H * .10, 10, W * .84, H * .10, W * .75);
@@ -5019,7 +5032,7 @@ var GXS = (function () {
     const topRoom = TP + Math.round((toName ? 176 : 100) * FT), botRoom = TP + Math.round(70 * FT) + liftRoom;
     const room = TH - topRoom - botRoom;
     const verse = verseText();
-    const nt = sc(String(note || '').trim());
+    let nt = sc(String(note || '').trim());
     const ref = refText();
     let vs = Math.round(58 * FT * FB), vl, fixed, ns, nl, total;
     const vsMin = Math.round((orig ? 20 : 28) * FT);
@@ -5041,18 +5054,21 @@ var GXS = (function () {
         }
       }
       total = fixed + (nt ? nl.length * ns * 1.76 : 0);
-      if (!orig || total <= room || vs <= vsMin) break;
+      if (total <= room || vs <= vsMin) break;   /* rf1105：所有模式都先把經文縮到放得下 */
       vs -= Math.max(1, Math.round(3 * FT));
     }
+    /* rf1105：縮到最小還放不下——先留放得下的行（最後加「…」）；連一行都放不下就整段省略，絕不壓到署名 */
     if (nt && total > room + 1) {
-      const fit = Math.max(1, Math.floor((room - fixed) / (ns * 1.76)));
-      if (nl.length > fit) {
+      const fit = Math.floor((room - fixed) / (ns * 1.76));
+      if (fit < 1) { nt = ''; nl = []; total = fixed - Math.round(86 * FT); cardOverflow = 'note'; }
+      else if (nl.length > fit) {
         nl = nl.slice(0, fit); let last = nl[fit - 1]; ctx.font = `${ns}px ${sans}`;
         while (last.length > 1 && ctx.measureText(last + '…').width > tiw) last = last.slice(0, -1);
         nl[fit - 1] = last.replace(/[，。、；：,.;:\s]+$/, '') + '…';
-        total = fixed + nl.length * ns * 1.76;
+        total = fixed + nl.length * ns * 1.76; cardOverflow = 'note';
       }
     }
+    if (total > room + 1) cardOverflow = 'verse';
     let y = topRoom + Math.max(0, (room - total) / 2);
     const vh = vs * .9 + vl.length * vs * 1.52 + Math.round(64 * FT), nh = total - vh;
     let vx = 0, vy = 0, nx = 0, ny = 0;
@@ -5196,12 +5212,63 @@ var GXS = (function () {
 
   /* ── 預覽 ───────────────────────────────────────────────────── */
   let cardURL = '';
+  let cardOverflow = '';   /* rf1105：''／'note'（領受放不下，已縮短或省略）／'verse'（經文縮到最小仍放不下） */
+  const relLum = (r, g, b) => { const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); }; return .2126 * f(r) + .7152 * f(g) + .0722 * f(b); };
+  const hexRGB = h => { h = String(h).replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) || 0); };
+  /* rf1105：相片當背景時，依相片上／中／下三段最「不利」的亮度算遮罩強度，讓文字對比至少約 5:1（8×12 小格取樣） */
+  function scrimAlphas(img, Tp, bg) {
+    const base = [.46, .66, .56], out = base.slice();
+    try {
+      const c = document.createElement('canvas'); c.width = 8; c.height = 12;
+      const x = c.getContext('2d'); coverDraw2(x, img, 0, 0, 8, 12);
+      const d = x.getImageData(0, 0, 8, 12).data, inkL = relLum.apply(null, hexRGB(Tp.ink));
+      for (let b = 0; b < 3; b++) {
+        const cells = [];
+        for (let row = b * 4; row < b * 4 + 4; row++) for (let col = 0; col < 8; col++) { const i = (row * 8 + col) * 4; cells.push([d[i], d[i + 1], d[i + 2]]); }
+        let a = base[b];
+        for (; a < .9; a += .03) {
+          let worst = 99;
+          for (const p of cells) {
+            const Lm = relLum(p[0] * (1 - a) + bg[0] * a, p[1] * (1 - a) + bg[1] * a, p[2] * (1 - a) + bg[2] * a);
+            worst = Math.min(worst, (Math.max(Lm, inkL) + .05) / (Math.min(Lm, inkL) + .05));
+          }
+          if (worst >= 5) break;
+        }
+        out[b] = +Math.min(.9, a).toFixed(2);
+      }
+    } catch (e) {}
+    return out;
+  }
+  /* rf1105：一鍵調整——依序試 (4:5,1.2)(4:5,1)(9:16,1.2)(9:16,1)(9:16,.9)，挑第一組放得下的 */
+  function cardAutoFit() {
+    const g = st(); if (isFull()) return T('整張原圖的字級請在「版面」調整', 'For a full photo, adjust the text size under Layout');
+    const cands = [['t', 1.2], ['t', 1], ['p', 1.2], ['p', 1], ['p', .9]], s0 = g.size, f0 = g.fs;
+    let pk = cands[cands.length - 1];
+    for (const c of cands) {
+      g.size = c[0]; g.fs = c[1];
+      const dm = SIZES[c[0]], cv = document.createElement('canvas');
+      try { drawCard(cv, Math.round(dm[0] / 2), Math.round(dm[1] / 2)); } catch (e) {}
+      if (!cardOverflow) { pk = c; break; }
+    }
+    g.size = pk[0]; g.fs = pk[1]; keep();
+    if (s0 === pk[0] && f0 === pk[1]) return T('目前的尺寸與字級已經合適', 'Current size and text size already fit');
+    return T('已選「', 'Chose “') + L2(SIZES[pk[0]][2]) + T('」與合適字級', '” and a fitting text size');
+  }
+  function cardWarnPaint() {
+    const el = q1('#gxsWarn', EL); if (!el) return;
+    el.style.display = cardOverflow ? '' : 'none';
+    if (cardOverflow) el.textContent = cardOverflow === 'note'
+      ? T('⚠️ 這張卡片放不下全部的內文，已先縮短；想完整呈現，可按「一鍵調整」或改選直式 9:16。', '⚠️ The card cannot fit all the text, so it was shortened. Try “Auto-fit” or Portrait 9:16.')
+      : T('⚠️ 經文比較長，字已縮到最小；建議按「一鍵調整」、改選直式 9:16，或只選一兩節。', '⚠️ The verse is long and already at the smallest size. Try “Auto-fit”, Portrait 9:16, or fewer verses.');
+  }
+  let outMime = 'image/png';
   function renderCard() {
     if (!item) return;
     clearTimeout(rendering);
     rendering = setTimeout(() => {
       const d = dims(), cv = document.createElement('canvas');
       try { drawCard(cv, d[0], d[1]); cardURL = cv.toDataURL('image/png'); } catch (e) { cardURL = ''; }
+      cardWarnPaint();
       const pv = q1('#gxsPv');
       if (pv && cardURL) { pv.src = cardURL; pv.style.aspectRatio = d[0] + ' / ' + d[1]; }
     }, 40);
@@ -5210,7 +5277,7 @@ var GXS = (function () {
     const d = dims(), cv = document.createElement('canvas');
     drawCard(cv, d[0], d[1]);
     return new Promise(r => {
-      try { cv.toBlob(b => r(b), 'image/png'); }
+      try { outMime = (photoImg || stkImg) ? 'image/jpeg' : 'image/png'; cv.toBlob(b => r(b), outMime, .92); }   /* rf1105：有相片輸出 JPEG .92 */
       catch (e) { r(null); }
     });
   }
@@ -6483,7 +6550,8 @@ function mx_strBytes(s){const a=new Uint8Array(s.length);for(let i=0;i<s.length;
       <p class="gxlab">${esc(T('外框', 'Border'))}</p>${chips(BORDERS.map(b => [b[0], L2(b[1])]), g.border, 'border')}
       <p class="gxlab">${esc(T('尺寸', 'Size'))}</p>${chips(Object.keys(SIZES).map(k => [k, L2(SIZES[k][2])]), g.size, 'size')}
       <p class="gxlab">${esc(T('字級', 'Text size'))}</p>${chips(FS.map(f => [f[0], L2(f[1])]), g.fs, 'fs')}
-      ${hint(T('字級會一起放大團體名稱、稱呼、經文、內文與署名。', 'Scales the group name, greeting, verse, text and signature together.'))}`;
+      ${hint(T('字級會一起放大團體名稱、稱呼、經文、內文與署名。', 'Scales the group name, greeting, verse, text and signature together.'))}
+      <button class="btn xs2" style="margin-top:8px" data-k="autofit">${esc(T('✨ 一鍵調整（自動挑合適的尺寸與字級）', '✨ Auto-fit (pick a size and text size that fit)'))}</button>`;
   }
   function tabPhoto() {
     const isStk = photoMode === 'sticker';
@@ -6671,6 +6739,7 @@ function mx_strBytes(s){const a=new Uint8Array(s.length);for(let i=0;i<s.length;
     if (k === 'share') return shareImg();
     if (k === 'tpl' || k === 'size' || k === 'border') { g[k] = v; keep(); return paint(); }
     if (k === 'fs' || k === 'vol') { g[k] = +v; keep(); return paint(); }
+    if (k === 'autofit') { say(cardAutoFit()); return paint(); }
     if (k === 'mc') { if (recOn()) return; g.mc = +v; keep(); return paint(); }
     if (k === 'pmode') { photoMode = v; if (v !== 'orig' && v !== 'full') origMove = false; origDX = origDY = origNX = origNY = 0; if (v !== 'sticker') { g.photoMode = v; keep(); } return paint(); }
     if (k === 'fk') { fullKind = v; return paint(); }
@@ -6716,9 +6785,9 @@ function mx_strBytes(s){const a=new Uint8Array(s.length);for(let i=0;i<s.length;
   }
   async function saveImg() {
     const b = await cardBlob(); if (!b) { say(T('請長按圖片儲存', 'Press and hold the picture to save')); return; }
-    const name = fileBase() + '.png';
+    const name = fileBase() + (outMime === 'image/jpeg' ? '.jpg' : '.png');
     if (isIOS()) {
-      const f = new File([b], name, { type: 'image/png' });
+      const f = new File([b], name, { type: outMime });
       if (navigator.canShare && navigator.canShare({ files: [f] })) {
         say(T('在分享面板選「儲存影像」就會存進相簿', 'Choose “Save Image” to put it in Photos'));
         try { await navigator.share({ files: [f] }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
@@ -6734,7 +6803,7 @@ function mx_strBytes(s){const a=new Uint8Array(s.length);for(let i=0;i<s.length;
   async function shareImg() {
     const b = await cardBlob();
     if (!b) return saveImg();
-    const f = new File([b], fileBase() + '.png', { type: 'image/png' });
+    const f = new File([b], fileBase() + (outMime === 'image/jpeg' ? '.jpg' : '.png'), { type: outMime });
     if (navigator.canShare && navigator.canShare({ files: [f] })) {
       try { await navigator.share({ files: [f], text: sc(verseText() + (item.ref ? '\n—— ' + item.ref : '')) }); return; }
       catch (e) { if (e && e.name === 'AbortError') return; }
@@ -6796,6 +6865,7 @@ function mx_strBytes(s){const a=new Uint8Array(s.length);for(let i=0;i<s.length;
       <div class="gxshead"><b>🖼 ${esc(T('美圖工作室', 'Card studio'))}</b><button class="ico" data-k="x" aria-label="close">✕</button></div>
       <div class="gxspv"><img id="gxsPv" alt=""></div>
       <p class="xs muted" style="text-align:center;margin:4px 0 8px">${esc(T('長按圖片也可以直接儲存', 'You can also press and hold the picture to save'))}</p>
+      <p class="xs" id="gxsWarn" style="display:none;text-align:center;margin:0 0 8px;color:#B35A00"></p>
       <div class="gxacts"><button class="btn pri" data-k="share">↗ ${esc(T('分享', 'Share'))}</button><button class="btn" data-k="save">⬇ ${esc(T('存到手機', 'Save'))}</button></div>
       <div class="gxtabs">${TABS.map(x => `<button data-t="${x[0]}">${esc(T(x[1][0], x[1][1]))}</button>`).join('')}</div>
       <div id="gxsBody"></div></div>`;
@@ -7604,6 +7674,326 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
   }
 
   function boot() { try { mountLang(); } catch (e) {} try { mountSel(); } catch (e) {} }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<script id="rf1105js">
+/* ═══════════════════════════════════════════════════════════════════
+   RF1105 掛件 v1（2026-11-05）：把《321互動聖經》v2.59–v2.64 的功能移到 321 學神神學（單檔外殼；一／二／三冊相同，可原樣複製）
+   A 小智：引導禱告（不替讀者禱告）＋誠實原則＋危機求助卡＋經文自動核對
+   B 原文字義：畫線面板／選取工具列的「🔍 原文字義」→ 選字面板 → 帶進小智（附 WORD_SYS 與本課已核對的字彙）
+   D 朗讀：雲端逾時與斷路器（失敗 20 秒內直接改裝置語音）、裝置語音看門狗（index.html 內 sysChunk）、睡前定時 ⏲
+   不改既有函式本體，只包住 window.aiSystem／aiSend／aiRender／markMenu／saySegs／say／stopSpeak。
+   宿主需有：lang()、toSC()、toast()、AI、CUR、CACHE、LEX、marks()、sentList()、markSpan()、SPK、rv、drawBar()、askAI()、VPICK321（可缺）
+   ═══════════════════════════════════════════════════════════════════ */
+(function () {
+  if (window.RF1105) return;
+  var D = {"pr": {"en": "PRAYER: do not pray on the reader's behalf and do not write a finished prayer for them to recite. Instead write a short \"Guided prayer\" section that invites the reader to pray in their own words: speak to the reader directly (you), give 3 to 4 gentle prompts such as thanksgiving, what to confess or surrender, what to ask, and a closing listening moment, each ending with an open invitation like \"tell Him in your own words…\". Never put the reader's name or personal details into the prayer. Only if the reader explicitly asks for a written prayer may you write one. When a closing line is needed, invite them to end with \"in the name of the Lord Jesus we pray, Amen\" — never \"in Jesus' name we ask, Amen.\"", "zs": "祷告：不要替读者祷告，也不要写一篇现成的祷告文让他背诵；请改写一小段「引导祷告」，邀请读者用自己的话向神祷告：直接对读者说话（用「你」），给 3～4 个温柔的引导，例如感恩、要认罪或交托的事、要祈求的事、安静聆听，每一项都以「用你自己的话告诉祂……」这样的开放邀请作结；不要把读者的名字或个人细节写进祷告里。只有读者明确要求写一篇祷告文时才可以写。需要收尾时，邀请他自己用「奉主耶稣的名祷告，阿们」结束，不要用「奉耶稣的名求」。", "tc": "禱告：不要替讀者禱告，也不要寫一篇現成的禱告文讓他背誦；請改寫一小段「引導禱告」，邀請讀者用自己的話向神禱告：直接對讀者說話（用「你」），給 3～4 個溫柔的引導，例如感恩、要認罪或交託的事、要祈求的事、安靜聆聽，每一項都以「用你自己的話告訴祂……」這樣的開放邀請作結；不要把讀者的名字或個人細節寫進禱告裡。只有讀者明確要求寫一篇禱告文時才可以寫。需要收尾時，邀請他自己用「奉主耶穌的名禱告，阿們」結束，不要用「奉耶穌的名求」。"}, "hs": {"en": " PRINCIPLES: (1) Be honest. Never invent a verse, a quotation, a Hebrew/Greek meaning or a historical fact; if unsure, say \"I am not sure\" and point the reader to the text. Quote Scripture only from the lesson content supplied below or verses you are certain of, and always give the reference (book chapter:verse). (2) Where Christians differ, say so briefly and fairly instead of presenting one view as the only one. (3) You are an AI companion, not a pastor, doctor or lawyer: for medical, legal, abuse or serious emotional matters, encourage the reader to talk to a trusted pastor, a professional or local emergency services. (4) If the reader mentions suicide, self-harm, abuse or immediate danger: respond first with calm care, do not lecture or quote verses at length, encourage them to contact local emergency services or a crisis line and a trusted person right now, and gently stay with them.", "zs": " 原则：（1）诚实：绝不编造经文、引言、原文字义或历史；不确定就直说「我不确定」，并请读者回到经文。引用经文只用本课内容里提供的或你确定的经文，并一定写出出处（书名 章:节）。（2）遇到基督徒之间有不同看法的议题，简短公平地说明，不把单一立场说成唯一答案。（3）你是 AI 陪读，不是牧者、医生或律师；涉及医疗、法律、受虐或严重情绪的事，鼓励读者找信任的牧者、专业人员或当地紧急服务。（4）若读者提到自杀、自伤、受虐或立即的危险：先用平静关怀的语气回应，不说教、不长篇引经，鼓励他现在就联系当地紧急服务或求助热线，以及身边可信任的人，并温柔地陪着他。", "tc": " 原則：（1）誠實：絕不編造經文、引言、原文字義或歷史；不確定就直說「我不確定」，並請讀者回到經文。引用經文只用本課內容裡提供的或你確定的經文，並一定寫出出處（書名 章:節）。（2）遇到基督徒之間有不同看法的議題，簡短公平地說明，不把單一立場說成唯一答案。（3）你是 AI 陪讀，不是牧者、醫生或律師；涉及醫療、法律、受虐或嚴重情緒的事，鼓勵讀者找信任的牧者、專業人員或當地緊急服務。（4）若讀者提到自殺、自傷、受虐或立即的危險：先用平靜關懷的語氣回應，不說教、不長篇引經，鼓勵他現在就聯絡當地緊急服務或求助專線，以及身邊可信任的人，並溫柔地陪著他。"}, "ws": {"en": " WORD STUDY: when the reader asks about the original-language meaning of a word, phrase or sentence, answer in this order with short headings: (1) Original — the Hebrew/Greek word(s) behind it, transliteration and basic meaning; if the Chinese union-version wording covers several original words, say so and explain each; (2) Usage here — part of speech or root idea and how it works in this verse and context; (3) Elsewhere — one or two other Bible uses ONLY if you are certain, with references; (4) Application — through the 3-2-1 lens (self-emptying, letting Jesus be King, led by the Spirit) with one small step for today. Be honest: label anything you are not sure of as uncertain, never invent Strong numbers or meanings, and close with one line reminding the reader to verify with a reliable lexicon (Strong's, BDAG, HALOT). Keep it clear and not too long.", "zs": " 原文字义：当读者问某个字、词或句的原文字义时，用简短小标题依序回答：①原文——背后的希伯来文／希腊文、拼音与基本字义；若和合本这个词对应不只一个原文字，请分别说明；②在这节的用法——词性或字根意思，以及放在这节上下文怎么理解；③圣经其他用法——只写你确定的一两处，附出处；④应用——从321角度（无己、让耶稣作王、被圣灵引导）带出，并给一个今天可以操练的小步骤。务必诚实：不确定的就标明不确定，绝不编造 Strong 编号或字义；最后用一行提醒读者对照可靠的原文工具书（如 Strong's、BDAG、HALOT）。篇幅精练。", "tc": " 原文字義：當讀者問某個字、詞或句的原文字義時，用簡短小標題依序回答：①原文——背後的希伯來文／希臘文、拼音與基本字義；若和合本這個詞對應不只一個原文字，請分別說明；②在這節的用法——詞性或字根意思，以及放在這節上下文怎麼理解；③聖經其他用法——只寫你確定的一兩處，附出處；④應用——從321角度（無己、讓耶穌作王、被聖靈引導）帶出，並給一個今天可以操練的小步驟。務必誠實：不確定的就標明不確定，絕不編造 Strong 編號或字義；最後用一行提醒讀者對照可靠的原文工具書（如 Strong's、BDAG、HALOT）。篇幅精練。"}, "cc": {"tc": "💛 **你現在不是一個人。** 我聽見你了，謝謝你願意說出來。\n\n如果你有傷害自己的念頭，或覺得撐不下去，請現在就找一個人陪你：\n\n- 緊急危險：**119**（救護）／**110**（警察）\n- 24 小時安心專線：**1925**（依舊愛我）\n- 生命線：**1995**\n- 張老師：**1980**\n- 身邊信任的牧者、家人或朋友，請現在就打給他\n\n神與你同在，祂看顧你。我也會在這裡陪你，你想說什麼都可以。", "zs": "💛 **你现在不是一个人。** 我听见你了，谢谢你愿意说出来。\n\n如果你有伤害自己的念头，或觉得撑不下去，请现在就找一个人陪你：联系你所在地的紧急服务或心理援助热线，并打给身边信任的牧者、家人或朋友。\n\n神与你同在，祂看顾你。我也会在这里陪你，你想说什么都可以。", "en": "💛 **You are not alone.** I hear you, and I am glad you said it.\n\nIf you are thinking about hurting yourself or feel you cannot go on, please reach out to someone right now: your local emergency number or crisis line, and a pastor, family member or friend you trust.\n\nGod is with you and cares for you. I am here too — say whatever you need."}, "cre": /自殺|自杀|輕生|轻生|不想活|想死|結束生命|结束生命|了結自己|了结自己|活不下去|傷害自己|伤害自己|割腕|跳樓|跳楼|suicid|kill myself|end my life|want to die|self[- ]?harm|hurt myself/i};
+  var RF = window.RF1105 = { wordNext: false, down: 0, lastFail: 0, ver: 'rf1105' };
+  function g(f, d) { try { var r = f(); return r === undefined ? d : r; } catch (e) { return d; } }
+  function L() { return g(function () { return lang(); }, 'zh-Hant'); }
+  function K() { var l = L(); return l === 'en' ? 'en' : (l === 'zh-Hans' ? 'zs' : 'tc'); }
+  function T(tc, en) {
+    var l = L();
+    if (l === 'en') return en;
+    if (l === 'zh-Hans') { var r = g(function () { return toSC(tc); }); if (r) return r; }
+    return tc;
+  }
+  function say(m) { g(function () { toast(m); }); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function arr(x) { return Array.prototype.slice.call(x || []); }
+
+  /* ───────────────── A：提示詞 ───────────────── */
+  var CRISIS_RE = D.cre;
+  RF.crisisHit = function (x) { return CRISIS_RE.test(String(x || '')); };
+  RF.crisisCard = function () { return D.cc[K()]; };
+  /* 引導禱告規則＋誠實原則；word=true 時再加原文字義結構與本課已核對的原文字彙 */
+  RF.sysText = function (word) {
+    var k = K(), s = '\n' + D.pr[k] + D.hs[k];
+    if (word) {
+      s += D.ws[k];
+      var lx = RF.lessonLex();
+      if (lx) s += (k === 'en' ? ' LESSON LEXICON (checked by the 321 team; prefer these and stay consistent with them): ' : (k === 'zs' ? ' 本课教材已核对的原文字（优先采用并与之一致；这些之外的字请标明把握程度）：' : ' 本課教材已核對的原文字（優先採用並與之一致；這些之外的字請標明把握程度）：')) + lx;
+    }
+    return s;
+  };
+  RF.lessonLex = function () {
+    return g(function () {
+      var id = CUR.lesson, out = [];
+      if (!id || !LEX) return '';
+      Object.keys(LEX).forEach(function (k) {
+        var e = LEX[k]; if (e && e.lessons && e.lessons.indexOf(id) >= 0 && e.label && out.length < 14) out.push(e.label);
+      });
+      return out.join('；');
+    }, '');
+  };
+  var A0 = window.aiSystem;
+  if (typeof A0 === 'function') window.aiSystem = function () {
+    var s = A0.apply(this, arguments), w = RF.wordNext; RF.wordNext = false;
+    return s + RF.sysText(w);
+  };
+
+  /* 危機求助卡：命中時在使用者提問後插入固定文字（不靠 AI），再照常回答；之後的對話不把它送給模型（index.html 的 hist 已過濾） */
+  var S0 = window.aiSend;
+  if (typeof S0 === 'function') window.aiSend = function (text) {
+    var inEl = document.getElementById('aiin'), q = text != null ? text : (inEl ? inEl.value : ''), was = g(function () { return AI.busy; }, false);
+    var r = S0.apply(this, arguments);
+    try {
+      if (!was && RF.crisisHit(q)) {
+        var a = AI.msgs, ui = -1, i;
+        for (i = a.length - 1; i >= 0; i--) if (a[i].role === 'user') { ui = i; break; }
+        if (ui >= 0 && !(a[ui + 1] && a[ui + 1].crisis)) { a.splice(ui + 1, 0, { role: 'assistant', text: RF.crisisCard(), crisis: true }); aiRender(true); }
+      }
+    } catch (e) { }
+    return r;
+  };
+
+  /* ───────────────── A：經文自動核對 ───────────────── */
+  var BASE = 'https://spch321-sudo.github.io/bible/', TOC = null, BK = {}, SH = {};
+  function getJ(u) { return fetch(u).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }); }
+  function toc() {
+    if (TOC) return Promise.resolve(TOC);
+    return getJ(BASE + 'toc.json').then(function (t) { TOC = t; for (var i = 0; i < t.length; i++) BK[t[i].id] = t[i]; return t; });
+  }
+  function shard(lg, b) {
+    var k = lg + '|' + b.shard;
+    if (!SH[k]) SH[k] = getJ(BASE + 'bible.' + lg + '.' + b.shard + '.json').catch(function (e) { delete SH[k]; throw e; });
+    return SH[k];
+  }
+  function verseOf(lg, r) {
+    var b = BK[r.b];
+    return shard(lg, b).then(function (d) {
+      var arr0 = d[r.b] && d[r.b][r.ch - 1]; if (!arr0) return '';
+      var hi = r.v2 || r.v, cur = 0, parts = [], i, j, seg;
+      for (i = 0; i < arr0.length; i++) {
+        seg = arr0[i]; if (!seg || !seg.length) continue;
+        for (j = 1; j + 1 < seg.length; j += 2) {
+          if (+seg[j] > 0) cur = +seg[j];
+          if (cur >= r.v && cur <= hi && seg[j + 1]) parts.push(String(seg[j + 1]));
+        }
+      }
+      return parts.join(lg === 'en' ? ' ' : '').replace(/〔[^〕]*〕/g, '').replace(/\s+/g, ' ').trim();
+    });
+  }
+  function labelOf(lg, r) { var b = BK[r.b], nm = lg === 'en' ? (b.en || b.zh) : (lg === 'zs' ? b.zs : b.zh); return nm + ' ' + r.ch + ':' + r.v + (r.v2 ? '-' + r.v2 : ''); }
+  /* 回傳 Promise<html>；網路失敗的那一處直接略過（不誤標 ⚠），全部略過就回 '' */
+  RF.verify = function (text) {
+    if (!window.VPICK321 || !VPICK321.refs) return Promise.resolve('');
+    var lg = K() === 'en' ? 'en' : (K() === 'zs' ? 'zs' : 'zh');
+    return toc().then(function () { return VPICK321.refs(text); }).then(function (refs) {
+      var seen = {}, list = [];
+      refs.forEach(function (r) { var k = r.b + r.ch + ':' + r.v + '-' + r.v2; if (!seen[k] && list.length < 6) { seen[k] = 1; list.push(r); } });
+      if (!list.length) return '';
+      return Promise.all(list.map(function (r) {
+        return verseOf(lg, r).then(function (t) { return { r: r, t: t, ok: true }; }, function () { return { r: r, ok: false }; });
+      })).then(function (rows) {
+        var shown = rows.filter(function (x) { return x.ok; });
+        if (!shown.length) return '';
+        var h = shown.map(function (x) {
+          return x.t ? '<div style="margin:6px 0"><b>' + esc(labelOf(lg, x.r)) + '</b>　' + esc(x.t) + '</div>'
+            : '<div style="margin:6px 0">⚠ <b>' + esc(labelOf(lg, x.r)) + '</b>　' + esc(T('找不到這處經文，請以聖經為準', 'This passage was not found — please check your Bible')) + '</div>';
+        }).join('');
+        return '<details class="xz-ver" style="margin:8px 0 2px;font-size:13px;line-height:1.7;color:var(--ink3,#777)"><summary style="cursor:pointer">📖 ' + esc(T('核對經文原文', 'Check the verses')) + '（' + shown.length + '）</summary>' + h +
+          '<div style="font-size:12px;margin-top:4px">' + esc(T('小智是 AI，引用可能有誤，請以這裡的經文原文為準。', 'Xiaozhi is an AI and may misquote; trust the text shown here.')) + '</div></details>';
+      });
+    });
+  };
+  RF.afterRender = function () {
+    var box = document.getElementById('aimsgs');
+    if (!box || g(function () { return AI.fav; }, false) || !AI.msgs.length) return;
+    var nodes = arr(box.children).filter(function (e) { return e.classList && e.classList.contains('m'); });
+    AI.msgs.forEach(function (m, i) {
+      var n = nodes[i];
+      if (!n || m.role !== 'assistant' || m.crisis || !m.text || !n.classList.contains('a')) return;
+      var tx = n.querySelector('.tx'); if (!tx) return;
+      var slot = n.querySelector('.rf-ver');
+      if (m.rfv === undefined) {
+        m.rfv = null;
+        RF.verify(m.text).then(function (h) { m.rfv = h || ''; RF.paintVer(); }, function () { m.rfv = ''; });
+      }
+      if (typeof m.rfv === 'string' && m.rfv) {
+        if (!slot) { slot = document.createElement('div'); slot.className = 'rf-ver'; tx.parentNode.insertBefore(slot, tx.nextSibling); }
+        if (slot.getAttribute('data-h') !== String(m.rfv.length)) { slot.innerHTML = m.rfv; slot.setAttribute('data-h', String(m.rfv.length)); }
+      }
+    });
+  };
+  RF.paintVer = function () { try { RF.afterRender(); } catch (e) { } };
+  var R0 = window.aiRender;
+  if (typeof R0 === 'function') window.aiRender = function () {
+    var r = R0.apply(this, arguments);
+    try { RF.afterRender(); } catch (e) { }
+    return r;
+  };
+
+  /* ───────────────── B：原文字義 ───────────────── */
+  var WD_PUNCT = /[\s，。、；：！？「」『』（）〔〕《》,.;:!?"“”‘’()\[\]]/;
+  function isCJK(x) { return /[㐀-鿿]/.test(x); }
+  function tokens(x) {
+    if (isCJK(x)) return Array.from(x).map(function (c) { return { t: c, w: WD_PUNCT.test(c) }; });
+    return x.split(/(\s+)/).filter(function (z) { return z !== ''; }).map(function (z) { return { t: z, w: /^\s+$/.test(z) }; });
+  }
+  function lessonRef() {
+    var l = g(function () { return CACHE[CUR.lesson]; }, null) || {};
+    var n = l.number || (String(CUR.lesson || '').replace(/\D/g, '') * 1);
+    return L() === 'en' ? ('Lesson ' + n + (l.title ? ' ' + l.title : '')) : ('第' + n + '課' + (l.title ? '《' + l.title + '》' : ''));
+  }
+  RF.openWord = function (sent) {
+    sent = String(sent || '').replace(/[▶▼]/g, '').replace(/\s+/g, ' ').trim();
+    if (!sent) return say(T('沒有可查的文字', 'Nothing to look up'));
+    var old = document.getElementById('rfWdMask'); if (old) old.remove();
+    var toks = tokens(sent), a = -1, b = -1, ref = lessonRef();
+    var mask = document.createElement('div'); mask.id = 'rfWdMask'; mask.className = 'sheet on';
+    mask.innerHTML = '<div class="inner" role="dialog"><div class="grab"></div>' +
+      '<p class="mkhead">🔍 ' + esc(T('原文字義', 'Original-language meaning')) + '　<span class="muted" style="font-size:.7em;font-weight:400">' + esc(ref) + '</span></p>' +
+      '<p class="muted" style="margin:0 0 8px;font-size:.78em">' + esc(T('點一個字開始，再點另一個字就選到那裡；也可以直接查整句。', 'Tap a word to start, tap another to extend — or look up the whole sentence.')) + '</p>' +
+      '<div class="rf-wdv">' + toks.map(function (k, i) { return k.w ? esc(k.t) : '<span class="rf-wdc" data-i="' + i + '">' + esc(k.t) + '</span>'; }).join('') + '</div>' +
+      '<div class="rf-wdsel muted">' + esc(T('尚未選取', 'Nothing selected')) + '</div>' +
+      '<div class="btnrow"><button type="button" class="btn pri" data-a="sel" disabled>' + esc(T('查選取的字詞', 'Look up selection')) + '</button>' +
+      '<button type="button" class="btn" data-a="sent">' + esc(T('查這一句', 'This sentence')) + '</button>' +
+      '<button type="button" class="btn sm" data-a="close">' + esc(T('取消', 'Close')) + '</button></div>' +
+      '<p class="muted" style="margin:10px 0 0;font-size:.74em">' + esc(T('小智會說明原文字義並帶到應用；內容是 AI 回答，請再對照可靠的原文工具書（如 Strong\'s、BDAG、HALOT）。', 'Xiaozhi explains the original wording and applies it. It is an AI answer — please verify with a reliable lexicon (Strong\'s, BDAG, HALOT).')) + '</p></div>';
+    document.body.appendChild(mask);
+    function selText() {
+      if (a < 0) return '';
+      var lo = Math.min(a, b), hi = Math.max(a, b);
+      return toks.slice(lo, hi + 1).map(function (k) { return k.t; }).join('').replace(/^[\s，。、；：！？「」『』（）〔〕《》,.;:!?"“”‘’()\[\]]+|[\s，。、；：！？「」『』（）〔〕《》,.;:!?"“”‘’()\[\]]+$/g, '');
+    }
+    function paint() {
+      var lo = a < 0 ? 1e9 : Math.min(a, b), hi = a < 0 ? -1 : Math.max(a, b), tx = selText();
+      arr(mask.querySelectorAll('.rf-wdc')).forEach(function (c) { var i = +c.getAttribute('data-i'); c.classList.toggle('on', i >= lo && i <= hi); });
+      mask.querySelector('.rf-wdsel').textContent = tx ? '「' + tx + '」' : T('尚未選取', 'Nothing selected');
+      mask.querySelector('[data-a=sel]').disabled = !tx;
+    }
+    mask.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (t === mask) { mask.remove(); return; }
+      var c = t.closest ? t.closest('.rf-wdc') : null;
+      if (c) { var i = +c.getAttribute('data-i'); if (a < 0 || a !== b) { a = b = i; } else { b = i; } paint(); return; }
+      var bt = t.closest ? t.closest('button') : null; if (!bt) return;
+      var x = bt.getAttribute('data-a');
+      if (x === 'close') mask.remove();
+      else if (x === 'sel') { var s = selText(); if (s) RF.askWord(sent, s, 'sel'); }
+      else if (x === 'sent') RF.askWord(sent, sent, 'sent');
+    });
+  };
+  RF.askWord = function (sent, target, kind) {
+    if (g(function () { return !!AI.busy; }, false)) return say(T('小智還在回答，請稍後再問', 'Xiaozhi is still answering — please wait a moment'));
+    var m = document.getElementById('rfWdMask'); if (m) m.remove();
+    var sh = document.getElementById('sheet'); if (sh) sh.classList.remove('on');
+    var kn = kind === 'sel' ? T('字詞', 'word/phrase') : T('整句', 'sentence'), ref = lessonRef();
+    var q = L() === 'en'
+      ? 'Please explain the original-language meaning and help me apply it. Source: ' + ref + '. The sentence: "' + sent + '". I want to study (' + kn + '): "' + target + '".'
+      : T('請查考原文字義並帶我應用。出處：' + ref + '。這句話：「' + sent + '」。我要查的是（' + kn + '）：「' + target + '」。', '');
+    RF.wordNext = true;
+    try { askAI(q); } finally { RF.wordNext = false; }
+  };
+  function sentOfMark(i) {
+    return g(function () {
+      var m = marks(CUR.lesson)[i], list = sentList(), sp = markSpan(m, list), en = L() === 'en';
+      var t = sp ? list.slice(sp[0], sp[1] + 1).map(function (x) { return x.t; }).join(en ? ' ' : '') : '';
+      return t || m.q;
+    }, '');
+  }
+  var M0 = window.markMenu;
+  if (typeof M0 === 'function') window.markMenu = function (i) {
+    var r = M0.apply(this, arguments);
+    try {
+      var row = document.querySelector('#sheetbody .txp-acts');
+      if (row && !row.querySelector('[data-a=word]')) {
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.setAttribute('data-a', 'word');
+        b.textContent = '🔍 ' + T('原文字義', 'Word study');
+        b.onclick = function (e) {
+          e.stopPropagation();
+          var m = g(function () { return marks(CUR.lesson)[i]; }), n = document.getElementById('mknote');
+          if (m && n && String(n.value || '').trim() !== (m.note || '')) { m.note = String(n.value || '').trim(); g(function () { save(); }); }
+          var s = sentOfMark(i), box = document.getElementById('sheet'); if (box) box.classList.remove('on');
+          RF.openWord(s);
+        };
+        row.appendChild(b);
+      }
+    } catch (e) { }
+    return r;
+  };
+  function mountSel() {
+    var bar = document.getElementById('selbar'); if (!bar || document.getElementById('sbWord')) return;
+    var b = document.createElement('button'); b.id = 'sbWord'; b.textContent = '🔍 ' + T('字義', 'Words');
+    b.onclick = function () {
+      var t = g(function () { return SELTXT; }) || ''; g(function () { clearSel(); });
+      if (t) RF.openWord(t);
+    };
+    bar.insertBefore(b, document.getElementById('sbAsk'));
+  }
+
+  /* ───────────────── D：朗讀 ───────────────── */
+  /* 向 Azure 要音檔：一般 15 秒逾時×3 次；第一條音軌或剛失敗過 6 秒×2 次；失敗後 20 秒內（沒有快取的）直接丟 cloud paused，呼叫端自然改用裝置語音 */
+  RF.net = function (piece) {
+    if (Date.now() < RF.down) return Promise.reject(new Error('cloud paused'));
+    var quick = (g(function () { return SPK.on && !SPK.chunk; }, false)) || (Date.now() - RF.lastFail < 60000);
+    var tries = quick ? 2 : 3, ms = quick ? 6000 : 15000, n = 0;
+    function one() {
+      n++;
+      var ctrl = window.AbortController ? new AbortController() : null, tm = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) { } }, ms) : 0;
+      return fetch(CFG.ttsEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctrl ? ctrl.signal : undefined,
+        body: JSON.stringify({ voice: rvVoice(), rate: rvRate(), sil: 140, silc: 140, sile: 260, text: piece }) })
+        .then(function (res) { if (!res.ok) throw new Error('TTS ' + res.status); return res.blob(); })
+        .then(function (b) { clearTimeout(tm); RF.lastFail = 0; return b; }, function (e) {
+          clearTimeout(tm);
+          if (n < tries) return one();
+          RF.down = Date.now() + 20000; RF.lastFail = Date.now();
+          throw e;
+        });
+    }
+    return one();
+  };
+  ['saySegs', 'say'].forEach(function (nm) {     /* 使用者按下朗讀＝重新嘗試雲端 */
+    var f = window[nm]; if (typeof f !== 'function') return;
+    window[nm] = function () { RF.down = 0; return f.apply(this, arguments); };
+  });
+  /* 睡前定時：關 → 15 → 30 → 60 分鐘 → 關。時間到淡出 5 秒再停（保留不續讀；本 App 朗讀唸完這一課本來就會停，不自動接下一課） */
+  var SL = { m: 0, t: 0, f: 0 }, MINS = [0, 15, 30, 60];
+  RF.sleepBtn = function () {
+    var m = SL.m;
+    return '<button type="button" class="' + (m ? 'on' : '') + '" onclick="RF1105.sleepCycle()" title="' + esc(T('睡前定時', 'Sleep timer')) + '" aria-label="' + esc(T('睡前定時', 'Sleep timer')) + '">⏲' + (m ? '<small>' + MINS[m] + '′</small>' : '') + '</button>';
+  };
+  RF.sleepCycle = function () {
+    clearTimeout(SL.t); SL.t = 0;
+    SL.m = (SL.m + 1) % MINS.length;
+    if (SL.m) SL.t = setTimeout(RF.sleepFire, MINS[SL.m] * 60000);
+    say(SL.m ? T('睡前定時：' + MINS[SL.m] + ' 分鐘後淡出並停止', 'Sleep timer: fades out and stops in ' + MINS[SL.m] + ' min') : T('睡前定時已關閉', 'Sleep timer off'));
+    g(function () { drawBar(); });
+  };
+  function sleepClear() { clearTimeout(SL.t); SL.t = 0; SL.m = 0; if (SL.f) { clearInterval(SL.f); SL.f = 0; g(function () { (rv.els || []).forEach(function (x) { x.volume = 1; }); }); } }
+  RF.sleepFire = function () {
+    SL.t = 0;
+    if (!g(function () { return SPK.on; }, false)) { sleepClear(); return; }
+    var els = g(function () { return rv.els || []; }, []), n = 0;
+    clearInterval(SL.f);
+    SL.f = setInterval(function () {
+      n++;
+      els.forEach(function (a) { try { a.volume = Math.max(0, 1 - n * 0.2); } catch (e) { } });
+      if (n >= 5) { clearInterval(SL.f); SL.f = 0; g(function () { stopSpeak(); }); els.forEach(function (a) { try { a.volume = 1; } catch (e) { } }); }
+    }, 1000);
+  };
+  var X0 = window.stopSpeak;
+  if (typeof X0 === 'function') window.stopSpeak = function () {
+    sleepClear();
+    var r = X0.apply(this, arguments);
+    return r;
+  };
+  RF.state = function () { return { sleep: SL.m, down: RF.down, wordNext: RF.wordNext }; };
+
+  /* ───────────────── 樣式與開機 ───────────────── */
+  if (!document.getElementById('rfCss')) {
+    var st = document.createElement('style'); st.id = 'rfCss';
+    st.textContent = '#rfWdMask.sheet{z-index:96}' +
+      '.rf-wdv{font-family:var(--serif,serif);font-size:1.15em;line-height:2.1;padding:10px 12px;background:var(--bg,#f6f2e8);border-radius:12px;margin-bottom:8px;word-break:break-word;max-height:38vh;overflow:auto}' +
+      '.rf-wdc{cursor:pointer;border-radius:5px;padding:2px 0;margin:0 .5px}' +
+      '.rf-wdc.on{background:rgba(201,162,39,.28);box-shadow:0 0 0 1.5px #c9a227}' +
+      '.rf-wdsel{margin:0 0 10px;font-size:.85em;min-height:1.4em;overflow-wrap:anywhere}' +
+      '#ai .m.a .rf-ver{display:block}#spkbar button small{font-size:.62em;margin-left:1px}';
+    document.head.appendChild(st);
+  }
+  function boot() { try { mountSel(); } catch (e) { } try { RF.afterRender(); } catch (e) { } }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>

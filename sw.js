@@ -3,9 +3,9 @@
    · 圖片等其他同源資源：快取優先
    · 新版裝好後 skipWaiting 並接手；頁面的 AU 掛件會在空閒時自動重整換新版，忙碌時只顯示更新條
    · 同一個 github.io 網域共用 Cache Storage：清舊快取只清自己的前綴（PFX） */
-const CACHE_VERSION = 'g321theo3-v1.4-co1-gp1103-au1103-xz1103-xzm1103-md1104-rf1105';
+const CACHE_VERSION = 'g321theo3-v1.5-co1-gp1103-au1103-xz1103-xzm1103-md1104-rf1105-cs1109';
 const PFX = 'g321theo3-';
-const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './xz2.js', './xzm.js', './coread.js', './peerjs.min.js'];
+const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './xz2.js', './xzm.js', './coread.js', './cpar.js', './peerjs.min.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE_VERSION).then(c => Promise.all(CORE.map(u =>
